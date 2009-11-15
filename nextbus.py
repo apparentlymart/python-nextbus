@@ -89,7 +89,7 @@ def memoize_in_cache(key_name, expire_time):
     return decorator
 
 
-@memoize_in_cache("all_agencies", 604800)
+@memoize_in_cache("agencies", 604800)
 def get_all_agencies():
     """
     Get a list of all agencies supported by the NextBus public API.
@@ -106,7 +106,7 @@ def get_all_agencies():
     return ret
 
 
-@memoize_in_cache("all_agencies", 604800)
+@memoize_in_cache("agency_routes", 604800)
 def get_all_routes_for_agency(tag):
     """
     Get a list of all routes for a given agency.
@@ -118,7 +118,7 @@ def get_all_routes_for_agency(tag):
     return ret
 
 
-@memoize_in_cache("all_agencies", 604800)
+@memoize_in_cache("route_config", 604800)
 def get_route_config(agency_tag, route_tag):
     """
     Get the route configuration for a given route with in a given agency.
@@ -126,6 +126,56 @@ def get_route_config(agency_tag, route_tag):
     etree = fetch_nextbus_url("routeConfig", agency_tag, ('r', route_tag))
     elem = etree.find("route")
     return RouteConfig.from_elem(elem)
+
+
+@memoize_in_cache("predictions", 30)
+def get_predictions_for_stop(agency_tag, stop_id):
+    """
+    Get the current predictions for a particular stop across all routes.
+    """
+    etree = fetch_nextbus_url("predictions", agency_tag, ('stopId', stop_id))
+    predictions = Predictions()
+    for predictions_elem in etree.findall("predictions"):
+        route = Route(tag=predictions_elem.get("routeTag"), title=predictions_elem.get("routeTitle"))
+        predictions.stop_title = predictions_elem.get("stopTitle")
+
+        no_predictions_direction_title = predictions_elem.get("dirTitleBecauseNoPredictions")
+        if no_predictions_direction_title:
+            # record the direction but no predictions
+            direction = TaglessDirection(title=no_predictions_direction_title, route=route)
+            predictions.directions.append(direction)
+            continue
+
+        for message_elem in predictions_elem.findall("message"):
+            predictions.messages.add(message_elem.get("text"))
+
+        for direction_elem in predictions_elem.findall("direction"):
+            direction = Direction()
+            direction.route = route
+            direction.title = direction_elem.get("title")
+            predictions.directions.append(direction)
+
+            for prediction_elem in direction_elem.findall("prediction"):
+                prediction = Prediction()
+                prediction.direction = direction
+                prediction.seconds = int(prediction_elem.get("seconds"))
+                prediction.minutes = int(prediction_elem.get("minutes"))
+                prediction.epoch_time = int(prediction_elem.get("epochTime"))
+                prediction.block = prediction_elem.get("block")
+
+                if prediction_elem.get("isDeparture") == "true":
+                    prediction.is_departing = True
+                else:
+                    prediction.is_departing = False
+
+                # For some reason NextBus returns the direction tag on
+                # each individual prediction rather than on the direction element.
+                direction.tag = prediction_elem.get("dirTag")
+                predictions.predictions.append(prediction)
+
+            predictions.predictions.sort(lambda a,b : int(a.epoch_time - b.epoch_time))
+
+    return predictions
 
 
 def _standard_repr(self):
@@ -265,22 +315,60 @@ class StopOnRoute(Stop):
         self.direction_tag = elem.get("dirTag")
         return self
 
-
-class Direction:
-    route = None
-    tag = None
+class TaglessDirection:
+    """
+    A direction that only has a display title and lacks a tag.
+    
+    In the prediction output when a particular direction has no predictions
+    NextBus returns only the name of the direction and not its tag,
+    so this really stupid class is used to represent that situation.
+    """
     title = None
-    name = None
+    route = None
     __repr__ = _standard_repr
     __init__ = _autoinit()
+
+
+class Direction(TaglessDirection):
+    tag = None
 
 
 class DirectionOnRoute(Direction):
     use_for_ui = None
     stops = None
+    name = None
 
     @_autoinit
     def __init__(self):
         if self.stops is None:
             self.stops = []
+
+class Predictions:
+    directions = None
+    messages = None
+    predictions = None
+    stop_title = None
+    __repr__ = _standard_repr
+
+    @_autoinit
+    def __init__(self):
+        if self.messages is None:
+            self.messages = set()
+        if self.directions is None:
+            self.directions = []
+        if self.predictions is None:
+            self.predictions = []
+
+
+class Prediction:
+    direction = None
+    minutes = None
+    seconds = None
+    epoch_time = None
+    is_departing = None
+    block = None
+    __repr__ = _standard_repr
+    __init__ = _autoinit()
+
+
 
