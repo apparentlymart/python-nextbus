@@ -128,7 +128,7 @@ def get_route_config(agency_tag, route_tag):
     return RouteConfig.from_elem(elem)
 
 
-@memoize_in_cache("predictions", 30)
+@memoize_in_cache("stop_predictions", 30)
 def get_predictions_for_stop(agency_tag, stop_id):
     """
     Get the current predictions for a particular stop across all routes.
@@ -176,6 +176,18 @@ def get_predictions_for_stop(agency_tag, stop_id):
             predictions.predictions.sort(lambda a,b : int(a.epoch_time - b.epoch_time))
 
     return predictions
+
+
+@memoize_in_cache("all_vehicles", 30)
+def get_all_vehicle_locations(agency_tag):
+    etree = fetch_nextbus_url("vehicleLocations", agency_tag, ('t', 0))
+    return map(lambda elem : Vehicle.from_elem(elem), etree.findall("vehicle"))
+
+
+@memoize_in_cache("route_vehicles", 30)
+def get_vehicle_locations_on_route(agency_tag, route_tag):
+    etree = fetch_nextbus_url("vehicleLocations", agency_tag, ('r', route_tag), ('t', 0))
+    return map(lambda elem : Vehicle.from_elem(elem), etree.findall("vehicle"))
 
 
 def _standard_repr(self):
@@ -371,4 +383,36 @@ class Prediction:
     __init__ = _autoinit()
 
 
+class Vehicle:
+    id = None
+    route_tag = None
+    direction_tag = None
+    latitude = None
+    longitude = None
+    seconds_since_report = None
+    predictable = None
+    heading = None
+    leading_vehicle_id = None
+    __repr__ = _standard_repr
+    __init__ = _autoinit()
+
+    @classmethod
+    def from_elem(cls, elem):
+        self = cls()
+        self.id = elem.get("id")
+        self.route_tag = elem.get("routeTag")
+        self.direction_tag = elem.get("dirTag")
+        self.latitude = float(elem.get("lat"))
+        self.longitude = float(elem.get("lon"))
+        self.seconds_since_report = int(elem.get("secsSinceReport"))
+        self.heading = float(elem.get("heading"))
+        self.leading_vehicle_id = elem.get("leadingVehicleId")
+        self.predictable = (elem.get("predictable") == "true")
+
+        if self.route_tag == "null":
+            self.route_tag = None
+        if self.direction_tag == "null":
+            self.direction_tag = None
+        
+        return self
 
